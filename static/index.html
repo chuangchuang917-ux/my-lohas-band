@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>樂活五線譜股價位階分析儀 - LOHAS Linear Regression Band</title>
+    <meta name="description" content="基於線性迴歸與殘差標準差計算的樂活五線譜 (LOHAS Linear Regression Band) 股價位階分析網站，支援台美股歷史股價回測與投資位階分析。">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for beautiful icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/style.css?v=1.1">
+    <!-- ECharts CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header Section -->
+        <header class="app-header">
+            <div class="logo">
+                <i class="fa-solid fa-chart-line-up logo-icon"></i>
+                <div class="logo-text">
+                    <h1>樂活五線譜</h1>
+                    <span class="subtitle">LOHAS Linear Regression Band</span>
+                </div>
+            </div>
+            <div class="theme-badge">
+                <span class="status-pulse"></span> 量化交易位階分析儀
+            </div>
+        </header>
+
+        <!-- Tabs Navigation -->
+        <div class="tabs-navigation">
+            <button class="tab-btn active" id="tab-monitor" onclick="switchTab('monitor')">
+                <i class="fa-solid fa-earth-americas"></i> 即時商品監控
+            </button>
+            <button class="tab-btn" id="tab-analysis" onclick="switchTab('analysis')">
+                <i class="fa-solid fa-magnifying-glass-chart"></i> 單檔量化分析
+            </button>
+        </div>
+
+        <!-- Monitor View -->
+        <div id="monitor-view" class="tab-content">
+            <section class="panel monitor-panel card" style="width: 100%; border: 1px solid var(--border-color); background: var(--bg-card); backdrop-filter: var(--glass-blur);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.2rem;">
+                    <h2 class="panel-title" style="margin-bottom:0; font-family:var(--font-heading); font-size:1.25rem;">
+                        <i class="fa-solid fa-table-list text-pink" style="color:var(--secondary);"></i>
+                        即時商品價格與位階監控看板
+                        <span style="font-size:0.85rem; color:var(--text-muted); font-weight:normal; margin-left:0.5rem;">(點選列可載入量化分析)</span>
+                    </h2>
+                    <button id="btn-add-monitor" onclick="openAddMonitorModal()" style="display:flex; align-items:center; gap:0.4rem; background:linear-gradient(135deg,var(--accent-primary),var(--secondary)); border:none; color:#fff; padding:0.45rem 1rem; border-radius:8px; font-size:0.9rem; font-weight:600; cursor:pointer; transition:opacity 0.2s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">
+                        <i class="fa-solid fa-plus"></i> 新增商品
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="monitor-table">
+                        <thead>
+                            <tr>
+                                <th>商品名稱</th>
+                                <th>商品價格</th>
+                                <th>漲跌幅</th>
+                                <th>五線譜位階</th>
+                                <th>樂活通道位階</th>
+                                <th style="text-align:center;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="monitor-table-body">
+                            <!-- Dynamic rows will be loaded by javascript -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <!-- Analysis View (Wrapper for Single Stock Analysis) -->
+        <div id="analysis-view" class="tab-content hidden">
+            <!-- Main Dashboard -->
+            <main class="dashboard-grid">
+            <!-- Left Panel: Controls and Inputs -->
+            <section class="panel control-panel card">
+                <h2 class="panel-title"><i class="fa-solid fa-sliders-up text-indigo"></i> 參數設定</h2>
+                
+                <form id="lohas-form" class="form-container" onsubmit="event.preventDefault(); handleSearch();">
+                    <!-- Stock Ticker Input -->
+                    <div class="input-group">
+                        <label for="stock-symbol">股票代碼</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-search input-icon"></i>
+                            <input type="text" id="stock-symbol" name="symbol" value="2330.TW" placeholder="例如: 2330.TW 或 SPY" required>
+                        </div>
+                    </div>
+
+                    <!-- Presets -->
+                    <div class="preset-group">
+                        <label>熱門代碼</label>
+                        <div class="presets">
+                            <button type="button" class="btn-preset active" onclick="setSymbol('2330.TW')">台積電 (2330)</button>
+                            <button type="button" class="btn-preset" onclick="setSymbol('SPY')">S&P 500 (SPY)</button>
+                            <button type="button" class="btn-preset" onclick="setSymbol('AAPL')">蘋果 (AAPL)</button>
+                            <button type="button" class="btn-preset" onclick="setSymbol('0050.TW')">元大台灣50</button>
+                        </div>
+                    </div>
+
+                    <!-- Time Frame Toggle -->
+                    <div class="input-group">
+                        <label>分析時間區間 (年)</label>
+                        <div class="period-toggle-group" id="period-selector">
+                            <button type="button" class="btn-period" data-period="0.5">0.5年</button>
+                            <button type="button" class="btn-period" data-period="1.5">1.5年</button>
+                            <button type="button" class="btn-period active" data-period="3.5">3.5年</button>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="btn-submit" class="btn-submit">
+                        <i class="fa-solid fa-rotate"></i> 開始分析
+                    </button>
+                </form>
+            </section>
+
+            <!-- Right Panel: Market Insights & Status -->
+            <section class="panel insights-panel card" id="insights-card">
+                <h2 class="panel-title"><i class="fa-solid fa-wand-magic-sparkles text-pink"></i> 當前位階診斷</h2>
+                
+                <div class="insights-placeholder" id="insights-placeholder">
+                    <div class="spinner-pulse"></div>
+                    <p>正在分析市場數據，請稍候...</p>
+                </div>
+
+                <div class="insights-content hidden" id="insights-content">
+                    <div class="insights-header">
+                        <div class="ticker-info">
+                            <h3 id="info-symbol">2330.TW</h3>
+                            <span id="info-period" class="badge">1.5 年區間</span>
+                        </div>
+                        <div class="current-price-box">
+                            <span class="label">最新收盤價</span>
+                            <div class="price-value" id="info-price">--</div>
+                            <span class="date" id="info-date">--</span>
+                        </div>
+                    </div>
+
+                    <div class="status-grid">
+                        <div class="status-box">
+                            <span class="label">當前位階</span>
+                            <div class="value badge-level" id="info-level">--</div>
+                        </div>
+                        <div class="status-box">
+                            <span class="label">偏離值 (Z-Score)</span>
+                            <div class="value" id="info-bias">--</div>
+                        </div>
+                        <div class="status-box">
+                            <span class="label">殘差標準差 (σ)</span>
+                            <div class="value" id="info-sigma">--</div>
+                        </div>
+                        <div class="status-box">
+                            <span class="label">趨勢線預估值</span>
+                            <div class="value" id="info-central">--</div>
+                        </div>
+                        <div class="status-box">
+                            <span class="label">通道位置</span>
+                            <div class="value badge-level" id="info-channel-pos">--</div>
+                        </div>
+                        <div class="status-box">
+                            <span class="label">20週均線 (20MA)</span>
+                            <div class="value" id="info-channel-ma">--</div>
+                        </div>
+                    </div>
+
+                    <!-- Long-term MA Diagnostics Sub-grid -->
+                    <div class="status-grid" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                        <h4 style="grid-column: span 2; font-family: var(--font-heading); font-size: 0.95rem; font-weight: 600; color: #e2e8f0; margin-bottom: 0.25rem;"><i class="fa-solid fa-chart-line text-indigo"></i> 長線均線診斷</h4>
+                        <div class="status-box">
+                            <span class="label">5年均線價格</span>
+                            <div class="value" id="info-ma5y">--</div>
+                        </div>
+                        <div class="status-box">
+                            <span class="label">5年線偏離度</span>
+                            <div class="value" id="info-ma5y-bias">--</div>
+                        </div>
+                        <div class="status-box">
+                            <span class="label">10年均線價格</span>
+                            <div class="value" id="info-ma10y">--</div>
+                        </div>
+                        <div class="status-box">
+                            <span class="label">10年線偏離度</span>
+                            <div class="value" id="info-ma10y-bias">--</div>
+                        </div>
+                        <div class="status-box col-span-2" style="grid-column: span 2;">
+                            <span class="label">長線排列型態</span>
+                            <div class="value badge-level" id="info-ma-alignment" style="display: block; text-align: center; font-size: 0.95rem;">--</div>
+                        </div>
+                    </div>
+
+                    <!-- Strategy / Investment Guidance Card -->
+                    <div class="guidance-card" id="info-guidance-card">
+                        <div class="guidance-header">
+                            <i class="fa-solid fa-circle-info guidance-icon" id="info-guidance-icon"></i>
+                            <span class="guidance-title">策略指引</span>
+                        </div>
+                        <p class="guidance-desc" id="info-guidance-desc">--</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Chart Section -->
+            <section class="panel chart-panel card col-span-2">
+                <div class="chart-header">
+                    <h2 class="panel-title"><i class="fa-solid fa-chart-area text-blue"></i> 股價走勢與五線譜軌道</h2>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-color price"></span>實際收盤價</span>
+                        <span class="legend-item"><span class="legend-color trend"></span>趨勢線</span>
+                    </div>
+                </div>
+                <div id="lohas-chart" class="chart-container"></div>
+            </section>
+
+            <!-- LOHAS Channel Chart Section -->
+            <section class="panel chart-panel card col-span-2" id="channel-card">
+                <div class="chart-header">
+                    <h2 class="panel-title"><i class="fa-solid fa-chart-line text-pink"></i> 股價走勢與樂活通道</h2>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-color price"></span>實際收盤價 (週線)</span>
+                        <span class="legend-item"><span class="legend-color channel-ma"></span>20週均線 (20MA)</span>
+                        <span class="legend-item"><span class="legend-color channel-up"></span>通道上軌 (UB)</span>
+                        <span class="legend-item"><span class="legend-color channel-down"></span>通道下軌 (LB)</span>
+                    </div>
+                </div>
+                <div id="channel-chart" class="chart-container"></div>
+            </section>
+
+            <!-- VIX Chart Section -->
+            <section class="panel chart-panel card col-span-2" id="vix-card">
+                <div class="chart-header">
+                    <h2 class="panel-title"><i class="fa-solid fa-arrow-trend-up text-violet"></i> CBOE 恐慌指數 (VIX)</h2>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-color vix-legend"></span>VIX 恐慌指數</span>
+                    </div>
+                </div>
+                <div id="vix-chart" class="chart-container"></div>
+            </section>
+
+            <!-- Long-term MA Chart Section -->
+            <section class="panel chart-panel card col-span-2" id="ma-card">
+                <div class="chart-header">
+                    <h2 class="panel-title"><i class="fa-solid fa-chart-line text-amber" style="color: #eab308;"></i> 股價走勢與長線移動平均線</h2>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-color price"></span>實際收盤價</span>
+                        <span class="legend-item"><span class="legend-color ma-5y"></span>5年均線</span>
+                        <span class="legend-item"><span class="legend-color ma-10y"></span>10年均線</span>
+                    </div>
+                </div>
+                <div id="ma-chart" class="chart-container"></div>
+            </section>
+        </main>
+
+        <!-- Explanatory Guide Section -->
+        <footer class="explanatory-guide card">
+            <h2 class="guide-title"><i class="fa-solid fa-graduation-cap"></i> 樂活五線譜量化原理說明</h2>
+            <div class="guide-grid">
+                <div class="guide-item">
+                    <h3><span class="dot red"></span> 極樂觀 / 樂觀區間 (Greed)</h3>
+                    <p>當股價站上 <strong>+1σ 到 +2σ</strong>（或高於 +2σ）時，代表股價已過度偏離線性均值，市場情緒極度貪婪，此時面臨<b>高檔修正風險</b>，不宜追高，可考慮減碼分批獲利了結。</p>
+                </div>
+                <div class="guide-item">
+                    <h3><span class="dot orange"></span> 偏樂觀 / 偏悲觀區間 (Neutral)</h3>
+                    <p>股價在 <strong>-1σ 到 +1σ</strong> 之間波動，屬於合理的隨機走勢區間，代表價格契合中軌趨勢。此時應觀察趨勢線本身的斜率是向上（多頭）或向下（空頭）發展。</p>
+                </div>
+                <div class="guide-item">
+                    <h3><span class="dot green"></span> 悲觀 / 極悲觀區間 (Fear)</h3>
+                    <p>當股價跌破 <strong>-1σ 到 -2σ</strong>（或低於 -2σ）時，表示股價大幅低於線性回歸均值，市場陷入極度恐懼。此時屬於<b>低估機會區</b>，長期投資人可考慮在此分批布局。</p>
+                </div>
+            </div>
+
+            <h2 class="guide-title" style="margin-top: 1.5rem;"><i class="fa-solid fa-compass"></i> 樂活通道量化原理說明</h2>
+            <div class="guide-grid">
+                <div class="guide-item">
+                    <h3><span class="dot red"></span> 突破上軌 (UB) - 強勢動能</h3>
+                    <p>當週收盤價站上<strong>通道上軌 (UB)</strong> 時，代表短期上漲動能極為強勁（超買），但此時不宜急著賣出，可等股價<b>跌回上軌之內</b>再考慮調節持股。</p>
+                </div>
+                <div class="guide-item">
+                    <h3><span class="dot orange"></span> 通道內區間 - 正常波動</h3>
+                    <p>當股價在<strong>上軌與下軌之間</strong>波動，代表處於正常的整理或趨勢波段。可以 20週均線 (20MA) 作為多空分水嶺，高於中軌偏多，低於中軌偏空。</p>
+                </div>
+                <div class="guide-item">
+                    <h3><span class="dot blue"></span> 跌破下軌 (LB) - 超跌弱勢</h3>
+                    <p>當週收盤價跌破<strong>通道下軌 (LB)</strong> 時，代表股價出現超跌，下行速度過快。此時不宜急著接刀，建議等股價<b>重新站回下軌之內</b>再行分批布局。</p>
+                </div>
+            </div>
+
+            <h2 class="guide-title" style="margin-top: 1.5rem;"><i class="fa-solid fa-graduation-cap"></i> 長線均線指標量化原理說明</h2>
+            <div class="guide-grid">
+                <div class="guide-item">
+                    <h3><span class="dot red" style="background-color: #eab308;"></span> 5年均線 (五年線) - 長期多空嶺</h3>
+                    <p>代表過去 5 年（約 1260 個交易日）市場所有參與者的平均持股成本。對於極長期投資人（如退休基金、主權基金）而言，<b>五年線是判斷個股是否具有長期投資價值的核心分水嶺</b>。當股價跌至五年線附近且止穩時，通常具備強力的長線成本支撐力道。</p>
+                </div>
+                <div class="guide-item">
+                    <h3><span class="dot blue" style="background-color: #2dd4bf;"></span> 10年均線 (十年線) - 終極「防線」</h3>
+                    <p>代表過去 10 年（約 2520 個交易日）的市場平均持股成本，在台股與美股中通常被視為<b>景氣循環的終極防禦底線</b>（俗稱「國安基金防線」）。在非常極端的系統性風險（如金融海嘯、疫情爆發）下，股價跌破十年線往往代表非理性恐慌，長線而言通常是極佳的價值投資布局黃金點。</p>
+                </div>
+                <div class="guide-item">
+                    <h3><span class="dot green" style="background-color: #a855f7;"></span> 均線排列與多空解讀</h3>
+                    <p>當「收盤價 > 5年線 > 10年線」時，稱為<b>多頭排列</b>，代表長線趨勢持續向上，適合順勢持股；當「收盤價 < 5年線 < 10年線」時，稱為<b>空頭排列</b>，代表長線趨勢疲弱，應耐心等待底部確立；若兩條均線糾結，則代表市場正處於長線景氣循環的轉折與整理期。</p>
+                </div>
+            </div>
+
+            <div class="disclaimer">
+                <p><i class="fa-solid fa-triangle-exclamation"></i> <strong>免責聲明：</strong>本網站計算結果僅供量化學術研究與資料視覺化範例，不構成任何實際投資建議。金融市場有風險，投資人應獨立審慎評估並自負盈虧。</p>
+            </div>
+        </footer>
+        </div> <!-- End of analysis-view -->
+    </div>
+
+    <!-- Custom JS -->
+    <script src="/static/app.js?v=1.2"></script>
+
+    <!-- Add Monitor Item Modal -->
+    <div id="add-monitor-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9999; align-items:center; justify-content:center;">
+        <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:16px; padding:2rem; width:360px; max-width:92vw; box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+            <h3 style="font-family:var(--font-heading); font-size:1.15rem; color:#f1f5f9; margin-bottom:1.4rem;">
+                <i class="fa-solid fa-plus-circle" style="color:var(--accent-primary);"></i> 新增監控商品
+            </h3>
+            <div style="margin-bottom:1rem;">
+                <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.4rem;">股票 / 商品代碼 <span style="color:#f87171;">*</span></label>
+                <input id="modal-symbol" type="text" placeholder="例如：NVDA、BTC-USD、2454.TW" style="width:100%; box-sizing:border-box; background:var(--bg-secondary); border:1px solid var(--border-color); color:#f1f5f9; padding:0.55rem 0.8rem; border-radius:8px; font-size:0.95rem; outline:none;">
+            </div>
+            <div style="margin-bottom:1.5rem;">
+                <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.4rem;">顯示名稱（可留空，系統自動抓取）</label>
+                <input id="modal-name" type="text" placeholder="例如：輝達、比特幣" style="width:100%; box-sizing:border-box; background:var(--bg-secondary); border:1px solid var(--border-color); color:#f1f5f9; padding:0.55rem 0.8rem; border-radius:8px; font-size:0.95rem; outline:none;">
+            </div>
+            <p id="modal-error" style="display:none; color:#f87171; font-size:0.85rem; margin-bottom:1rem;"></p>
+            <div style="display:flex; gap:0.75rem; justify-content:flex-end;">
+                <button onclick="closeAddMonitorModal()" style="background:transparent; border:1px solid var(--border-color); color:var(--text-muted); padding:0.5rem 1.1rem; border-radius:8px; cursor:pointer; font-size:0.9rem;">取消</button>
+                <button id="modal-confirm" onclick="confirmAddMonitor()" style="background:linear-gradient(135deg,var(--accent-primary),var(--secondary)); border:none; color:#fff; padding:0.5rem 1.3rem; border-radius:8px; font-size:0.9rem; font-weight:600; cursor:pointer;">確認新增</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

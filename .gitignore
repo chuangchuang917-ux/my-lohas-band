@@ -1,0 +1,18 @@
+# 環境變數（含資料庫密碼，絕對不能上傳）
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# 本地 SQLite（Render 用 Supabase，不需要）
+lohas.db
+
+# 一次性腳本
+reset_db.py
+check_ma.py
+benchmark_lohas.py
+
+# 開發工具
+.python-version
