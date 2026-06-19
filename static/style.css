@@ -827,3 +827,17 @@ body {
 .drag-handle:hover {
     color: var(--text-secondary);
 }
+
+/* Monitor Detail Section Charts Grid Layout */
+.monitor-detail-charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    width: 100%;
+}
+
+@media (max-width: 1024px) {
+    .monitor-detail-charts-grid {
+        grid-template-columns: 1fr;
+    }
+}

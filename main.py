@@ -96,7 +96,7 @@ STOCK_NAMES = {
     "^VIX": "恐慌指數",
     # 新增監控商品
     "^TWII": "台灣加權指數",
-    "^VNINDEX": "越南胡志明指數",
+    "^VNINDEX.VN": "越南胡志明指數",
     "^N225": "日本日經225",
     "ZS=F": "大豆期貨",
     "ZC=F": "玉米期貨",
@@ -670,7 +670,7 @@ MONITOR_ITEMS = [
     {"symbol": "0050.TW", "name": "元大台灣50"},
     # 新增商品
     {"symbol": "^TWII",   "name": "台灣加權指數"},
-    {"symbol": "FVNM",    "name": "越南ETF(FVNM)"},
+    {"symbol": "^VNINDEX.VN", "name": "越南胡志明指數"},
     {"symbol": "^N225",   "name": "日本日經225"},
     {"symbol": "ZS=F",    "name": "大豆期貨"},
     {"symbol": "ZC=F",    "name": "玉米期貨"},

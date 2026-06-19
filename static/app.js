@@ -6,6 +6,12 @@ let vixChart = null;
 let maChart = null;
 let currentPeriod = 3.5; // Default period
 
+// Monitor detail variables
+let monitorLohasChart = null;
+let monitorChannelChart = null;
+let currentMonitorSymbol = null;
+let currentMonitorPeriod = 3.5;
+
 // Wait for DOM to load
 // Tab state management
 let activeTab = 'monitor';
@@ -56,6 +62,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (maChart) {
             maChart.resize();
         }
+        if (monitorLohasChart) {
+            monitorLohasChart.resize();
+        }
+        if (monitorChannelChart) {
+            monitorChannelChart.resize();
+        }
     });
 });
 
@@ -73,6 +85,12 @@ function switchTab(tab) {
         analysisView.classList.add('hidden');
         
         loadMonitorData();
+
+        // Resize monitor detail charts since they might have been drawn while hidden
+        setTimeout(() => {
+            if (monitorLohasChart) monitorLohasChart.resize();
+            if (monitorChannelChart) monitorChannelChart.resize();
+        }, 100);
     } else {
         tabAnalysis.classList.add('active');
         tabMonitor.classList.remove('active');
@@ -173,7 +191,18 @@ function renderMonitorTable(data) {
 
     // 初始化拖曳排序
     initDragSort(tableBody);
+
+    // 自動加載第一個監控商品詳情，或是維持當前商品
+    if (data.length > 0) {
+        const stillExists = data.some(item => item.symbol.toUpperCase() === (currentMonitorSymbol || '').toUpperCase());
+        if (stillExists) {
+            loadMonitorDetail(currentMonitorSymbol, currentMonitorPeriod);
+        } else {
+            loadMonitorDetail(data[0].symbol, currentMonitorPeriod);
+        }
+    }
 }
+
 
 function createMonitorRow(item) {
     const tr = document.createElement('tr');
@@ -440,8 +469,12 @@ function sortByOrder(data, order) {
 
 
 function selectSymbolFromMonitor(symbol) {
-    switchTab('analysis');
-    setSymbol(symbol);
+    if (activeTab === 'monitor') {
+        loadMonitorDetail(symbol, currentMonitorPeriod, true);
+    } else {
+        switchTab('analysis');
+        setSymbol(symbol);
+    }
 }
 
 // Initialize Period Buttons
@@ -453,6 +486,18 @@ function initPeriodSelector() {
             button.classList.add('active');
             currentPeriod = parseFloat(button.getAttribute('data-period'));
             handleSearch();
+        });
+    });
+
+    const monitorPeriodButtons = document.querySelectorAll('#monitor-detail-period-selector .btn-period');
+    monitorPeriodButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            monitorPeriodButtons.forEach(btn => btn.classList.remove('active'));
+            button.classList.add('active');
+            currentMonitorPeriod = parseFloat(button.getAttribute('data-period'));
+            if (currentMonitorSymbol) {
+                loadMonitorDetail(currentMonitorSymbol, currentMonitorPeriod);
+            }
         });
     });
 }
@@ -472,7 +517,10 @@ function setSymbol(symbol) {
     // Update active state in preset buttons
     const presetButtons = document.querySelectorAll('.presets .btn-preset');
     presetButtons.forEach(button => {
-        if (button.textContent.includes(symbol) || (symbol === '0050.TW' && button.textContent.includes('元大台灣50'))) {
+        const onClickStr = button.getAttribute('onclick') || '';
+        const match = onClickStr.match(/setSymbol\(['"]([^'"]+)['"]\)/);
+        const presetSymbol = match ? match[1] : '';
+        if (presetSymbol.toUpperCase() === symbol.toUpperCase()) {
             button.classList.add('active');
         } else {
             button.classList.remove('active');
@@ -511,11 +559,17 @@ async function handleSearch() {
     // Update active state in preset buttons to match search input
     const presetButtons = document.querySelectorAll('.presets .btn-preset');
     presetButtons.forEach(button => {
-        if (button.textContent.includes(symbol) || 
-            (symbol === '0050.TW' && button.textContent.includes('元大台灣50')) ||
-            (symbol.toUpperCase() === 'AAPL' && button.textContent.includes('蘋果')) ||
-            (symbol.toUpperCase() === 'SPY' && button.textContent.includes('S&P 500')) ||
-            (symbol.includes('2330') && button.textContent.includes('台積電'))) {
+        const onClickStr = button.getAttribute('onclick') || '';
+        const match = onClickStr.match(/setSymbol\(['"]([^'"]+)['"]\)/);
+        const presetSymbol = match ? match[1] : '';
+
+        const symbolUpper = symbol.toUpperCase();
+        const presetSymbolUpper = presetSymbol.toUpperCase();
+        const textUpper = button.textContent.toUpperCase();
+
+        if (presetSymbolUpper === symbolUpper ||
+            (symbolUpper.length >= 3 && presetSymbolUpper.includes(symbolUpper)) ||
+            (symbolUpper.length >= 3 && textUpper.includes(symbolUpper))) {
             button.classList.add('active');
         } else {
             button.classList.remove('active');
@@ -1555,3 +1609,573 @@ function renderMaChart(data) {
 
     maChart.setOption(option);
 }
+
+// ─── 即時商品監控下方的五線譜與樂活通道詳情加載 ─────────────────────
+async function loadMonitorDetail(symbol, period = 3.5, autoScroll = false) {
+    if (!symbol) return;
+    
+    currentMonitorSymbol = symbol;
+    currentMonitorPeriod = period;
+
+    const detailSection = document.getElementById('monitor-detail-section');
+    if (!detailSection) return;
+
+    // 確保區塊顯示
+    detailSection.style.display = 'block';
+
+    if (autoScroll) {
+        detailSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // 更新時間按鈕啟動狀態
+    const periodButtons = document.querySelectorAll('#monitor-detail-period-selector .btn-period');
+    periodButtons.forEach(btn => {
+        if (parseFloat(btn.getAttribute('data-period')) === period) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // 顯示載入中
+    document.getElementById('monitor-detail-title').textContent = symbol;
+    document.getElementById('monitor-detail-subtitle').textContent = '計算數據中，請稍候...';
+    document.getElementById('monitor-detail-price').textContent = '--';
+    document.getElementById('monitor-detail-bias').textContent = '--';
+    
+    const levelEl = document.getElementById('monitor-detail-level');
+    levelEl.textContent = '--';
+    levelEl.className = 'value badge-level';
+
+    const chPosEl = document.getElementById('monitor-detail-channel-pos');
+    chPosEl.textContent = '--';
+    chPosEl.className = 'value badge-level';
+
+    document.getElementById('monitor-detail-guidance-desc').textContent = '正在計算最新數據與指引...';
+
+    try {
+        const response = await fetch(`/api/lohas?symbol=${encodeURIComponent(symbol)}&period_years=${period}`);
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.detail || '取得資料失敗');
+        }
+        const data = await response.json();
+
+        // 渲染資訊
+        renderMonitorDetailInsights(data);
+
+        // 渲染圖表
+        renderMonitorLohasChart(data);
+        renderMonitorChannelChart(data);
+
+        // 自動 resize 一次確保寬度正確
+        setTimeout(() => {
+            if (monitorLohasChart) monitorLohasChart.resize();
+            if (monitorChannelChart) monitorChannelChart.resize();
+        }, 100);
+
+    } catch (error) {
+        console.error(error);
+        document.getElementById('monitor-detail-subtitle').textContent = `載入失敗: ${error.message}`;
+        document.getElementById('monitor-detail-guidance-desc').textContent = `無法載入數據。錯誤詳情：${error.message}`;
+    }
+}
+
+function renderMonitorDetailInsights(data) {
+    const latest = data.latest;
+    const displayName = data.company_name && data.company_name !== data.symbol
+        ? data.company_name
+        : data.symbol;
+
+    document.getElementById('monitor-detail-title').textContent = displayName;
+    document.getElementById('monitor-detail-subtitle').textContent = `${data.symbol} • ${data.period_years} 年區間 • ${latest.date} 收盤`;
+
+    document.getElementById('monitor-detail-price').textContent = formatNumber(latest.actual);
+    
+    // Z-Score
+    const biasVal = latest.bias;
+    const biasSign = biasVal >= 0 ? '+' : '';
+    document.getElementById('monitor-detail-bias').textContent = `${biasSign}${formatNumber(biasVal, 2)} σ`;
+
+    // 五線譜位階
+    const levelEl = document.getElementById('monitor-detail-level');
+    levelEl.textContent = latest.level;
+    levelEl.className = 'value badge-level ' + getLevelStyleClass(latest.level);
+
+    // 樂活通道位置
+    const channel = data.channel;
+    let chPosText = '--';
+    let chPosClass = '';
+    if (channel && channel.actual.length > 0) {
+        const wClose = channel.actual[channel.actual.length - 1];
+        const wMA = channel.ma[channel.ma.length - 1];
+        const wUp = channel.up_band[channel.up_band.length - 1];
+        const wDown = channel.down_band[channel.down_band.length - 1];
+
+        if (wClose > wUp) {
+            chPosText = '超漲 (高於上軌)';
+            chPosClass = 'level-extreme-optimistic';
+        } else if (wClose < wDown) {
+            chPosText = '超跌 (低於下軌)';
+            chPosClass = 'level-extreme-pessimistic';
+        } else if (wClose >= wMA) {
+            chPosText = '偏多 (高於中軌)';
+            chPosClass = 'level-mid-optimistic';
+        } else {
+            chPosText = '偏空 (低於中軌)';
+            chPosClass = 'level-mid-pessimistic';
+        }
+    }
+    const chPosEl = document.getElementById('monitor-detail-channel-pos');
+    chPosEl.textContent = chPosText;
+    chPosEl.className = 'value badge-level ' + chPosClass;
+
+    // 策略指引
+    const guidanceCard = document.getElementById('monitor-detail-guidance');
+    const guidanceIcon = document.getElementById('monitor-detail-guidance-icon');
+    const guidanceDesc = document.getElementById('monitor-detail-guidance-desc');
+
+    let gClass = 'guidance-hold';
+    let gIcon = 'fa-circle-info';
+    let gDesc = '';
+
+    const hasChannel = channel && channel.actual.length > 0;
+    const wClose = hasChannel ? channel.actual[channel.actual.length - 1] : 0;
+    const wUp = hasChannel ? channel.up_band[channel.up_band.length - 1] : 0;
+    const wDown = hasChannel ? channel.down_band[channel.down_band.length - 1] : 0;
+
+    if (biasVal >= 2.0) {
+        gClass = 'guidance-sell';
+        gIcon = 'fa-triangle-exclamation';
+        if (hasChannel && wClose > wUp) {
+            gDesc = '【極樂觀位階且突破通道上軌】股價與通道雙重過熱，雖多頭動能強勁，但隨時可能面臨高檔拉回。建議逢高積極落實分批獲利了結，切勿盲目追高。';
+        } else {
+            gDesc = '【極樂觀位階】股價偏離回歸中軌極大，市場情緒極度貪婪，此為歷史相對高檔風險區。強烈建議停止追高，分批減碼以規避價格拉回與修正風險。';
+        }
+    } else if (biasVal >= 1.0) {
+        gClass = 'guidance-sell';
+        gIcon = 'fa-shield-halved';
+        gDesc = '【樂觀位階】股價已進入相對高檔區，獲利了結賣壓可能逐步浮現。建議逢高適度調節持股，不宜重倉追價或融資擴大槓桿。';
+    } else if (biasVal >= 0.0) {
+        gClass = 'guidance-hold';
+        gIcon = 'fa-circle-check';
+        gDesc = '【偏樂觀位階】股價略高於趨勢中軌，仍屬於常態隨機波動區間。目前多頭趨勢仍在，建議持股續抱，注意觀察大盤走勢與趨勢線斜率是否持續向上。';
+    } else if (biasVal >= -1.0) {
+        gClass = 'guidance-hold';
+        gIcon = 'fa-circle-check';
+        if (hasChannel && wClose < wDown) {
+            gDesc = '【偏悲觀位階但跌破通道下軌】股價低於中軌且跌破樂活通道下緣，弱勢格局尚未止穩。建議先冷靜觀察，等股價站回通道下軌之內再行分批佈局。';
+        } else {
+            gDesc = '【偏悲觀位階】股價略低於中軌，處於中性偏低的位置。基本面健全的前提下，目前為健康的持股整理期，無須因短期價格下跌而過度恐慌。';
+        }
+    } else if (biasVal >= -2.0) {
+        gClass = 'guidance-buy';
+        gIcon = 'fa-chart-line-down';
+        if (hasChannel && wClose < wDown) {
+            gDesc = '【悲觀位階但跌破通道下軌】股價進入相對低估區，但樂活通道下軌失守，短線仍有慣性下跌動能。建議暫緩進場，靜待股價回升並重新站回下軌之上。';
+        } else {
+            gDesc = '【悲觀位階】股價進入相對低估機會區，市場情緒偏向悲觀，下行風險已大部分釋放。長線資金可考慮啟動定期定額或分批建倉計劃，累積便宜籌碼。';
+        }
+    } else {
+        gClass = 'guidance-buy';
+        gIcon = 'fa-gem';
+        if (hasChannel && wClose < wDown) {
+            gDesc = '【極悲觀位階但跌破通道下軌】市場恐懼蔓延且股價破通道底，長線極具吸引力。此時建議分批定期定額，或等待站回通道下軌之上再行重倉進場，以防價格過早探底。';
+        } else {
+            gDesc = '【極悲觀位階】市場恐懼蔓延，股價已出現嚴重超跌。對價值投資者而言，此時為歷史難得的「黃金買點」，長線建倉勝率極高，建議分批低吸佈局。';
+        }
+    }
+
+    guidanceCard.className = `guidance-card ${gClass}`;
+    guidanceIcon.className = `fa-solid ${gIcon} guidance-icon`;
+    guidanceDesc.textContent = gDesc;
+}
+
+function renderMonitorLohasChart(data) {
+    const chartDom = document.getElementById('monitor-detail-lohas-chart');
+    if (!monitorLohasChart) {
+        monitorLohasChart = echarts.init(chartDom, 'dark');
+    }
+
+    const N = data.dates.length;
+    const sigma = data.latest.sigma;
+    const bottomStack = data.bottom;
+    const bandWidth = Array(N).fill(sigma);
+
+    const option = {
+        backgroundColor: 'transparent',
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '5%',
+            top: '8%',
+            containLabel: true
+        },
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            borderColor: 'rgba(148, 163, 184, 0.2)',
+            textStyle: {
+                color: '#f8fafc',
+                fontSize: 12
+            },
+            padding: 15,
+            formatter: function (params) {
+                const dataIndex = params[0].dataIndex;
+                const date = data.dates[dataIndex];
+                const price = data.actual[dataIndex];
+                const central = data.central[dataIndex];
+                const top = data.top[dataIndex];
+                const upper = data.upper[dataIndex];
+                const lower = data.lower[dataIndex];
+                const bottom = data.bottom[dataIndex];
+                const bias = data.bias[dataIndex];
+
+                let levelDesc = '';
+                let dotColor = '#94a3b8';
+                if (bias >= 2) { levelDesc = '極樂觀'; dotColor = '#ef4444'; }
+                else if (bias >= 1) { levelDesc = '樂觀'; dotColor = '#f97316'; }
+                else if (bias >= 0) { levelDesc = '偏樂觀'; dotColor = '#eab308'; }
+                else if (bias >= -1) { levelDesc = '偏悲觀'; dotColor = '#0ea5e9'; }
+                else if (bias >= -2) { levelDesc = '悲觀'; dotColor = '#22c55e'; }
+                else { levelDesc = '極悲觀'; dotColor = '#10b981'; }
+
+                const biasSign = bias >= 0 ? '+' : '';
+                const formattedBias = `${biasSign}${formatNumber(bias, 2)}σ`;
+
+                const items = [
+                    { name: '極度樂觀 (+2σ)', value: top, color: '#ef4444' },
+                    { name: '樂觀 (+1σ)', value: upper, color: '#f97316' },
+                    { name: '中性 (趨勢線)', value: central, color: '#0ea5e9' },
+                    { name: '悲觀 (-1σ)', value: lower, color: '#22c55e' },
+                    { name: '極度悲觀 (-2σ)', value: bottom, color: '#10b981' },
+                    { name: '收盤價', value: price, color: '#ffffff', isPrice: true }
+                ];
+
+                items.sort((a, b) => b.value - a.value);
+
+                let itemsHtml = '';
+                items.forEach(item => {
+                    const formattedVal = formatNumber(item.value);
+                    const isBold = item.isPrice ? 'font-weight: 700; color: #ffffff;' : 'color: #e2e8f0;';
+                    const labelStyle = item.isPrice ? 'font-weight: 700; color: #ffffff;' : 'color: var(--text-secondary);';
+                    itemsHtml += `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                            <span style="display: flex; align-items: center; gap: 6px; ${labelStyle}">
+                                <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: ${item.color};"></span>
+                                ${item.name}
+                            </span>
+                            <span style="font-family: monospace; font-size: 13px; ${isBold}">${formattedVal}</span>
+                        </div>
+                    `;
+                });
+
+                return `
+                    <div style="font-family: var(--font-body); min-width: 220px;">
+                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px; color: #ffffff;">
+                            ${date}
+                        </div>
+                        ${itemsHtml}
+                        <div style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px; display: flex; justify-content: space-between; align-items: center;">
+                            <span style="color: var(--text-muted); font-size: 11px;">當前偏離:</span>
+                            <span style="font-weight: 600; font-size: 11px; color: ${dotColor};">${formattedBias}</span>
+                        </div>
+                        <div style="margin-top: 4px; display: flex; justify-content: space-between; align-items: center; background-color: rgba(255,255,255,0.05); padding: 5px 8px; border-radius: 4px;">
+                            <span style="color: var(--text-muted); font-size: 11px;">股價位階:</span>
+                            <span style="font-weight: 600; font-size: 11px; color: ${dotColor};">${levelDesc}</span>
+                        </div>
+                    </div>
+                `;
+            }
+        },
+        xAxis: {
+            type: 'category',
+            data: data.dates,
+            boundaryGap: false,
+            axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.2)' } },
+            axisLabel: { color: '#94a3b8', fontSize: 11 },
+            splitLine: { show: true, lineStyle: { color: 'rgba(148, 163, 184, 0.05)' } }
+        },
+        yAxis: {
+            type: 'value',
+            scale: true,
+            axisLine: { show: false },
+            axisLabel: {
+                color: '#94a3b8',
+                fontSize: 11,
+                formatter: function (value) { return formatNumber(value, 1); }
+            },
+            splitLine: { show: true, lineStyle: { color: 'rgba(148, 163, 184, 0.08)' } }
+        },
+        series: [
+            {
+                name: 'Base',
+                type: 'line',
+                data: bottomStack,
+                stack: 'lohas_band',
+                lineStyle: { opacity: 0 },
+                showSymbol: false,
+                z: 1
+            },
+            {
+                name: '悲觀~極悲觀',
+                type: 'line',
+                data: bandWidth,
+                stack: 'lohas_band',
+                areaStyle: { color: 'rgba(34, 197, 94, 0.09)' },
+                lineStyle: { opacity: 0 },
+                showSymbol: false,
+                z: 1
+            },
+            {
+                name: '趨勢線~悲觀',
+                type: 'line',
+                data: bandWidth,
+                stack: 'lohas_band',
+                areaStyle: { color: 'rgba(14, 165, 233, 0.05)' },
+                lineStyle: { opacity: 0 },
+                showSymbol: false,
+                z: 1
+            },
+            {
+                name: '樂觀~趨勢線',
+                type: 'line',
+                data: bandWidth,
+                stack: 'lohas_band',
+                areaStyle: { color: 'rgba(249, 115, 22, 0.05)' },
+                lineStyle: { opacity: 0 },
+                showSymbol: false,
+                z: 1
+            },
+            {
+                name: '極樂觀~樂觀',
+                type: 'line',
+                data: bandWidth,
+                stack: 'lohas_band',
+                areaStyle: { color: 'rgba(239, 68, 68, 0.09)' },
+                lineStyle: { opacity: 0 },
+                showSymbol: false,
+                z: 1
+            },
+            {
+                name: '極樂觀線 (+2σ)',
+                type: 'line',
+                data: data.top,
+                lineStyle: { type: 'dashed', width: 1, color: '#ef4444' },
+                showSymbol: false,
+                z: 2
+            },
+            {
+                name: '樂觀線 (+1σ)',
+                type: 'line',
+                data: data.upper,
+                lineStyle: { type: 'dashed', width: 1, color: '#f97316' },
+                showSymbol: false,
+                z: 2
+            },
+            {
+                name: '趨勢線 (TL)',
+                type: 'line',
+                data: data.central,
+                lineStyle: { width: 1.5, color: '#0ea5e9' },
+                showSymbol: false,
+                z: 3
+            },
+            {
+                name: '悲觀線 (-1σ)',
+                type: 'line',
+                data: data.lower,
+                lineStyle: { type: 'dashed', width: 1, color: '#22c55e' },
+                showSymbol: false,
+                z: 2
+            },
+            {
+                name: '極悲觀線 (-2σ)',
+                type: 'line',
+                data: data.bottom,
+                lineStyle: { type: 'dashed', width: 1, color: '#10b981' },
+                showSymbol: false,
+                z: 2
+            },
+            {
+                name: '實際收盤價',
+                type: 'line',
+                data: data.actual,
+                lineStyle: { width: 2.5, color: '#ffffff' },
+                symbol: 'circle',
+                symbolSize: 4,
+                itemStyle: { color: '#ffffff', borderWidth: 1, borderColor: 'rgba(0,0,0,0.5)' },
+                z: 10
+            }
+        ]
+    };
+
+    monitorLohasChart.setOption(option);
+}
+
+function renderMonitorChannelChart(data) {
+    const chartDom = document.getElementById('monitor-detail-channel-chart');
+    if (!monitorChannelChart) {
+        monitorChannelChart = echarts.init(chartDom, 'dark');
+    }
+
+    const channel = data.channel;
+    if (!channel || !channel.dates || channel.dates.length === 0) {
+        return;
+    }
+
+    const N = channel.dates.length;
+    const bottomStack = channel.down_band;
+    const bandWidth = [];
+    for (let i = 0; i < N; i++) {
+        bandWidth.push(channel.up_band[i] - channel.down_band[i]);
+    }
+
+    const option = {
+        backgroundColor: 'transparent',
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '5%',
+            top: '8%',
+            containLabel: true
+        },
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            borderColor: 'rgba(148, 163, 184, 0.2)',
+            textStyle: { color: '#f8fafc', fontSize: 12 },
+            padding: 15,
+            formatter: function (params) {
+                const dataIndex = params[0].dataIndex;
+                const date = channel.dates[dataIndex];
+                const price = channel.actual[dataIndex];
+                const ma = channel.ma[dataIndex];
+                const up = channel.up_band[dataIndex];
+                const down = channel.down_band[dataIndex];
+
+                let positionDesc = '';
+                let dotColor = '#94a3b8';
+                if (price > up) { positionDesc = '超漲 (高於上軌)'; dotColor = '#ef4444'; }
+                else if (price < down) { positionDesc = '超跌 (低於下軌)'; dotColor = '#10b981'; }
+                else if (price >= ma) { positionDesc = '偏多 (中軌與上軌間)'; dotColor = '#f97316'; }
+                else { positionDesc = '偏空 (中軌與下軌間)'; dotColor = '#0ea5e9'; }
+
+                const items = [
+                    { name: '通道上軌 (UB)', value: up, color: '#ec4899' },
+                    { name: '20週均線 (20MA)', value: ma, color: '#94a3b8' },
+                    { name: '通道下軌 (LB)', value: down, color: '#0ea5e9' },
+                    { name: '實際收盤價 (週收盤)', value: price, color: '#ffffff', isPrice: true }
+                ];
+
+                items.sort((a, b) => b.value - a.value);
+
+                let itemsHtml = '';
+                items.forEach(item => {
+                    const formattedVal = formatNumber(item.value);
+                    const isBold = item.isPrice ? 'font-weight: 700; color: #ffffff;' : 'color: #e2e8f0;';
+                    const labelStyle = item.isPrice ? 'font-weight: 700; color: #ffffff;' : 'color: var(--text-secondary);';
+                    itemsHtml += `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                            <span style="display: flex; align-items: center; gap: 6px; ${labelStyle}">
+                                <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: ${item.color};"></span>
+                                ${item.name}
+                            </span>
+                            <span style="font-family: monospace; font-size: 13px; ${isBold}">${formattedVal}</span>
+                        </div>
+                    `;
+                });
+
+                return `
+                    <div style="font-family: var(--font-body); min-width: 220px;">
+                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px; color: #ffffff;">
+                            ${date} (週線)
+                        </div>
+                        ${itemsHtml}
+                        <div style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px; display: flex; justify-content: space-between; align-items: center; background-color: rgba(255,255,255,0.05); padding: 5px 8px; border-radius: 4px;">
+                            <span style="color: var(--text-muted); font-size: 11px;">通道位置:</span>
+                            <span style="font-weight: 600; font-size: 11px; color: ${dotColor};">${positionDesc}</span>
+                        </div>
+                    </div>
+                `;
+            }
+        },
+        xAxis: {
+            type: 'category',
+            data: channel.dates,
+            boundaryGap: false,
+            axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.2)' } },
+            axisLabel: { color: '#94a3b8', fontSize: 11 },
+            splitLine: { show: true, lineStyle: { color: 'rgba(148, 163, 184, 0.05)' } }
+        },
+        yAxis: {
+            type: 'value',
+            scale: true,
+            axisLine: { show: false },
+            axisLabel: {
+                color: '#94a3b8',
+                fontSize: 11,
+                formatter: function (value) { return formatNumber(value, 1); }
+            },
+            splitLine: { show: true, lineStyle: { color: 'rgba(148, 163, 184, 0.08)' } }
+        },
+        series: [
+            {
+                name: 'Base',
+                type: 'line',
+                data: bottomStack,
+                stack: 'channel_band',
+                lineStyle: { opacity: 0 },
+                showSymbol: false,
+                z: 1
+            },
+            {
+                name: '通道範圍',
+                type: 'line',
+                data: bandWidth,
+                stack: 'channel_band',
+                areaStyle: { color: 'rgba(99, 102, 241, 0.05)' },
+                lineStyle: { opacity: 0 },
+                showSymbol: false,
+                z: 1
+            },
+            {
+                name: '通道上軌 (UB)',
+                type: 'line',
+                data: channel.up_band,
+                lineStyle: { width: 1, color: '#ec4899' },
+                showSymbol: false,
+                z: 2
+            },
+            {
+                name: '20週均線 (20MA)',
+                type: 'line',
+                data: channel.ma,
+                lineStyle: { width: 1.5, color: '#94a3b8', type: 'dashed' },
+                showSymbol: false,
+                z: 2
+            },
+            {
+                name: '通道下軌 (LB)',
+                type: 'line',
+                data: channel.down_band,
+                lineStyle: { width: 1, color: '#0ea5e9' },
+                showSymbol: false,
+                z: 2
+            },
+            {
+                name: '實際收盤價 (週)',
+                type: 'line',
+                data: channel.actual,
+                lineStyle: { width: 2, color: '#ffffff' },
+                symbol: 'circle',
+                symbolSize: 4,
+                itemStyle: { color: '#ffffff', borderWidth: 1, borderColor: 'rgba(0,0,0,0.5)' },
+                z: 10
+            }
+        ]
+    };
+
+    monitorChannelChart.setOption(option);
+}
+
