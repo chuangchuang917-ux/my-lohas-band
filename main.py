@@ -915,3 +915,9 @@ def get_monitor_data(symbols: str = None):
         
     return result
 
+if __name__ == '__main__':
+    import uvicorn
+    import os
+    # 優先讀取 Render 自動注入的 PORT 環境變數，若無則預設為 8000
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
