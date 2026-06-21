@@ -132,6 +132,16 @@ COMPANY_NAME_CACHE = {}
 
 def get_company_name(symbol: str, ticker) -> str:
     sym_upper = symbol.upper().strip()
+    if DB_ENABLED:
+        db = SessionLocal()
+        try:
+            item = db.query(WatchlistItem).filter_by(symbol=sym_upper).first()
+            if item:
+                return item.name
+        except Exception as e:
+            print(f"[Database Error] get_company_name failed to read from DB: {e}")
+        finally:
+            db.close()
     if sym_upper in STOCK_NAMES:
         return STOCK_NAMES[sym_upper]
     if sym_upper in COMPANY_NAME_CACHE:
