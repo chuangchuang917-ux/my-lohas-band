@@ -2,7 +2,7 @@ import datetime
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
@@ -10,6 +10,16 @@ from typing import Optional, List
 from database import init_db, DB_ENABLED, DailyPrice, WeeklyPrice, SessionLocal, WatchlistItem
 
 app = FastAPI(title="LOHAS Linear Regression Band Analyzer")
+
+# Prevent API responses from being cached by browsers
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 # Ensure static directory exists
 if not os.path.exists("static"):
