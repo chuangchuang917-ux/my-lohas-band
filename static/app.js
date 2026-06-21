@@ -135,26 +135,9 @@ async function loadMonitorData() {
     `;
     
     try {
-        // 若有自訂清單，把 symbols 傳給後端；否則用後端預設清單
-        const customList = getCustomWatchlist();
-        let url = '/api/monitor';
-        if (customList && customList.length > 0) {
-            const symbolsParam = customList.map(i => i.symbol).join(',');
-            url = `/api/monitor?symbols=${encodeURIComponent(symbolsParam)}`;
-        }
-        const response = await fetch(url);
+        const response = await fetch('/api/monitor');
         if (!response.ok) throw new Error('加載監控數據失敗');
-        let data = await response.json();
-
-        // 用本地自訂名稱覆蓋後端回傳的名稱
-        if (customList && customList.length > 0) {
-            const nameMap = {};
-            customList.forEach(i => { nameMap[i.symbol.toUpperCase()] = i.name; });
-            data = data.map(item => ({
-                ...item,
-                name: nameMap[item.symbol.toUpperCase()] || item.name
-            }));
-        }
+        const data = await response.json();
         monitorData = data;
         renderMonitorTable(monitorData);
     } catch (error) {
@@ -175,12 +158,6 @@ async function loadMonitorData() {
 function renderMonitorTable(data) {
     const tableBody = document.getElementById('monitor-table-body');
     if (!tableBody) return;
-
-    // 從 localStorage 讀取使用者上次的排序，若有則依此順序重排資料
-    const savedOrder = getSavedMonitorOrder();
-    if (savedOrder.length > 0) {
-        data = sortByOrder(data, savedOrder);
-    }
 
     tableBody.innerHTML = '';
     
@@ -260,46 +237,43 @@ function createMonitorRow(item) {
 }
 
 // ─── 刪除商品 ─────────────────────────────────────────────────────
-function deleteMonitorItem(symbol) {
+async function deleteMonitorItem(symbol) {
     if (!confirm(`確定要從監控清單移除「${symbol}」嗎？`)) return;
 
-    let list = getCustomWatchlist();
-    if (!list) {
-        // 第一次操作，從目前顯示的資料初始化自訂清單
-        list = monitorData.map(d => ({ symbol: d.symbol, name: d.name }));
-    }
-    list = list.filter(i => i.symbol.toUpperCase() !== symbol.toUpperCase());
-    saveCustomWatchlist(list);
-
-    // 同步移除排序記憶
-    const orderKey = 'lohas_monitor_order';
     try {
-        let order = JSON.parse(localStorage.getItem(orderKey) || '[]');
-        order = order.filter(s => s.toUpperCase() !== symbol.toUpperCase());
-        localStorage.setItem(orderKey, JSON.stringify(order));
-    } catch {}
-
-    loadMonitorData();
+        const response = await fetch(`/api/watchlist/${encodeURIComponent(symbol)}`, {
+            method: 'DELETE'
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || '刪除失敗');
+        }
+        loadMonitorData();
+    } catch (error) {
+        alert(`錯誤: ${error.message}`);
+    }
 }
 
 // ─── 改名商品 ─────────────────────────────────────────────────────
-function renameMonitorItem(symbol, currentName) {
+async function renameMonitorItem(symbol, currentName) {
     const newName = prompt(`請輸入「${symbol}」的新顯示名稱：`, currentName);
     if (newName === null) return;  // 使用者取消
     const finalName = newName.trim() || currentName;
 
-    let list = getCustomWatchlist();
-    if (!list) {
-        list = monitorData.map(d => ({ symbol: d.symbol, name: d.name }));
+    try {
+        const response = await fetch(`/api/watchlist/${encodeURIComponent(symbol)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: finalName })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || '重新命名失敗');
+        }
+        loadMonitorData();
+    } catch (error) {
+        alert(`錯誤: ${error.message}`);
     }
-    const idx = list.findIndex(i => i.symbol.toUpperCase() === symbol.toUpperCase());
-    if (idx >= 0) {
-        list[idx].name = finalName;
-    } else {
-        list.push({ symbol, name: finalName });
-    }
-    saveCustomWatchlist(list);
-    loadMonitorData();
 }
 
 // ─── 新增商品 Modal ───────────────────────────────────────────────
@@ -339,21 +313,17 @@ async function confirmAddMonitor() {
         const autoName = nameRaw || data.company_name || symbolRaw.toUpperCase();
         const newSymbol = data.symbol; // 後端標準化後的代碼
 
-        let list = getCustomWatchlist();
-        if (!list) {
-            // 把當前監控資料初始化為自訂清單
-            list = monitorData.map(d => ({ symbol: d.symbol, name: d.name }));
+        // 呼叫後端新增商品
+        const response = await fetch('/api/watchlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: newSymbol, name: autoName })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || '新增失敗');
         }
-        // 避免重複新增
-        if (list.some(i => i.symbol.toUpperCase() === newSymbol.toUpperCase())) {
-            errEl.textContent = `「${newSymbol}」已在監控清單中`;
-            errEl.style.display = 'block';
-            confirmBtn.textContent = '確認新增';
-            confirmBtn.disabled = false;
-            return;
-        }
-        list.push({ symbol: newSymbol, name: autoName });
-        saveCustomWatchlist(list);
+
         closeAddMonitorModal();
         loadMonitorData();
     } catch (e) {
@@ -443,10 +413,23 @@ function initDragSort(tableBody) {
 // ─── localStorage 排序持久化 ──────────────────────────────────────
 const MONITOR_ORDER_KEY = 'lohas_monitor_order';
 
-function saveMonitorOrder(tableBody) {
+async function saveMonitorOrder(tableBody) {
     const order = [...tableBody.querySelectorAll('tr[data-symbol]')]
         .map(tr => tr.getAttribute('data-symbol'));
-    localStorage.setItem(MONITOR_ORDER_KEY, JSON.stringify(order));
+    
+    try {
+        const response = await fetch('/api/watchlist/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbols: order })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            console.error('排序儲存失敗:', err.detail);
+        }
+    } catch (error) {
+        console.error('連線排序失敗:', error);
+    }
 }
 
 function getSavedMonitorOrder() {
