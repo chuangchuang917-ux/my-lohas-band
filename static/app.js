@@ -313,6 +313,11 @@ async function confirmAddMonitor() {
         const autoName = nameRaw || data.company_name || symbolRaw.toUpperCase();
         const newSymbol = data.symbol; // 後端標準化後的代碼
 
+        // 避免重複新增 (前端先檢查)
+        if (monitorData.some(i => i.symbol.toUpperCase() === newSymbol.toUpperCase())) {
+            throw new Error(`「${newSymbol}」已在監控清單中`);
+        }
+
         // 呼叫後端新增商品
         const response = await fetch('/api/watchlist', {
             method: 'POST',
@@ -1621,7 +1626,9 @@ async function loadMonitorDetail(symbol, period = 3.5, autoScroll = false) {
     });
 
     // 顯示載入中
-    document.getElementById('monitor-detail-title').textContent = symbol;
+    const matchedItem = monitorData.find(d => d.symbol.toUpperCase() === symbol.toUpperCase());
+    const displayName = matchedItem ? matchedItem.name : symbol;
+    document.getElementById('monitor-detail-title').textContent = displayName;
     document.getElementById('monitor-detail-subtitle').textContent = '計算數據中，請稍候...';
     document.getElementById('monitor-detail-price').textContent = '--';
     document.getElementById('monitor-detail-bias').textContent = '--';
@@ -1666,9 +1673,8 @@ async function loadMonitorDetail(symbol, period = 3.5, autoScroll = false) {
 
 function renderMonitorDetailInsights(data) {
     const latest = data.latest;
-    const displayName = data.company_name && data.company_name !== data.symbol
-        ? data.company_name
-        : data.symbol;
+    const matchedItem = monitorData.find(d => d.symbol.toUpperCase() === data.symbol.toUpperCase());
+    const displayName = matchedItem ? matchedItem.name : (data.company_name && data.company_name !== data.symbol ? data.company_name : data.symbol);
 
     document.getElementById('monitor-detail-title').textContent = displayName;
     document.getElementById('monitor-detail-subtitle').textContent = `${data.symbol} • ${data.period_years} 年區間 • ${latest.date} 收盤`;
