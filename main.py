@@ -155,13 +155,24 @@ def is_market_closed(symbol: str) -> bool:
             return True
         return False
 
+def get_market_today(symbol: str) -> datetime.date:
+    """取得目標股票市場目前的本地日期（時區相容）"""
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    sym = symbol.upper().strip()
+    if sym.endswith(".TW") or sym.endswith(".TWO") or sym.isdigit():
+        # Taiwan market: UTC+8
+        return (now_utc + datetime.timedelta(hours=8)).date()
+    else:
+        # Assume US market: UTC-5 (EST)
+        return (now_utc - datetime.timedelta(hours=5)).date()
+
 def upsert_daily_prices(db, symbol: str, df: pd.DataFrame):
     """
     Upsert daily prices into the database in a database-agnostic way.
     Only writes finalized historical dates (before today).
     Today's date is written only if market is closed.
     """
-    today = datetime.date.today()
+    today = get_market_today(symbol)
     market_closed = is_market_closed(symbol)
     
     # Query only the dates present in the incoming dataframe to avoid duplicate checks
@@ -352,7 +363,7 @@ def _get_lohas_data_impl(symbol: str, period_years: float, use_cache_only: bool 
         ticker = yf.Ticker(search_symbol)
         
         # 2. 回推歷史顯示區間起點與計算區間
-        end_date = datetime.date.today()
+        end_date = get_market_today(search_symbol)
         start_date = end_date - datetime.timedelta(days=int(period_years * 365))
         
         # 初始化資料容器

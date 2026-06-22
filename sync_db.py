@@ -2,7 +2,7 @@ import yfinance as yf
 import datetime
 import sys
 from database import SessionLocal, DB_ENABLED, init_db
-from main import standardize_symbol, rebuild_stock_data_in_db, upsert_daily_prices, upsert_weekly_prices
+from main import standardize_symbol, rebuild_stock_data_in_db, upsert_daily_prices, upsert_weekly_prices, get_market_today
 
 # Default watchlist symbols to keep updated
 TRACKED_SYMBOLS = [
@@ -32,7 +32,7 @@ def sync_stock(symbol: str):
             print(f"[Sync] Completed full historical sync for {search_symbol}.")
         else:
             latest_db_date = latest_record.date
-            today = datetime.date.today()
+            today = get_market_today(search_symbol)
             
             if latest_db_date < today:
                 # Fetch incremental updates (last 30 days) to check for splits/dividends adjustments
