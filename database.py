@@ -82,6 +82,15 @@ class WeeklyPrice(Base):
         UniqueConstraint("symbol", "date", name="uix_symbol_date_weekly"),
     )
 
+class WatchlistItem(Base):
+    __tablename__ = "watchlist_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(15), nullable=False, unique=True, index=True)
+    name = Column(String(100), nullable=False)
+    display_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 def init_db():
     """Create tables if they do not exist."""
     if DB_ENABLED and engine is not None:

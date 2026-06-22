@@ -73,6 +73,70 @@
                     </table>
                 </div>
             </section>
+
+            <!-- Monitor Detail Section -->
+            <div id="monitor-detail-section" class="card" style="margin-top: 1.5rem; display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
+                    <div>
+                        <h2 id="monitor-detail-title" style="margin-bottom:0.25rem; font-family:var(--font-heading); font-size:1.4rem; color: #ffffff;">---</h2>
+                        <span id="monitor-detail-subtitle" style="font-size:0.85rem; color:var(--text-muted);">---</span>
+                    </div>
+                    <!-- Time Frame Toggle -->
+                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                        <span style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 500;">分析區間：</span>
+                        <div class="period-toggle-group" id="monitor-detail-period-selector">
+                            <button type="button" class="btn-period" data-period="0.5">0.5年</button>
+                            <button type="button" class="btn-period" data-period="1.5">1.5年</button>
+                            <button type="button" class="btn-period active" data-period="3.5">3.5年</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Diagnostics Grid -->
+                <div class="status-grid" style="margin-bottom: 1.5rem;">
+                    <div class="status-box">
+                        <span class="label">最新收盤價</span>
+                        <div class="value" id="monitor-detail-price" style="font-size: 1.3rem; font-weight: 700; color: #ffffff;">--</div>
+                    </div>
+                    <div class="status-box">
+                        <span class="label">五線譜位階</span>
+                        <div class="value badge-level" id="monitor-detail-level" style="font-size: 0.95rem;">--</div>
+                    </div>
+                    <div class="status-box">
+                        <span class="label">樂活通道位置</span>
+                        <div class="value badge-level" id="monitor-detail-channel-pos" style="font-size: 0.95rem;">--</div>
+                    </div>
+                    <div class="status-box">
+                        <span class="label">偏離值 (Z-Score)</span>
+                        <div class="value" id="monitor-detail-bias" style="font-size: 1.2rem; font-weight: 600; color: #ffffff;">--</div>
+                    </div>
+                </div>
+
+                <!-- Strategy / Investment Guidance Card -->
+                <div class="guidance-card guidance-hold" id="monitor-detail-guidance" style="margin-bottom: 1.5rem;">
+                    <div class="guidance-header">
+                        <i class="fa-solid fa-circle-info guidance-icon" id="monitor-detail-guidance-icon"></i>
+                        <span class="guidance-title">策略指引</span>
+                    </div>
+                    <p class="guidance-desc" id="monitor-detail-guidance-desc">--</p>
+                </div>
+
+                <!-- Charts Container Grid -->
+                <div class="monitor-detail-charts-grid">
+                    <div class="panel chart-panel card" style="background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-color); padding: 1.25rem;">
+                        <div class="chart-header" style="margin-bottom: 0;">
+                            <h2 class="panel-title" style="font-size: 1.05rem; margin-bottom: 0.5rem;"><i class="fa-solid fa-chart-area text-blue"></i> 股價走勢與五線譜軌道</h2>
+                        </div>
+                        <div id="monitor-detail-lohas-chart" class="chart-container" style="height: 380px;"></div>
+                    </div>
+                    <div class="panel chart-panel card" style="background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-color); padding: 1.25rem;">
+                        <div class="chart-header" style="margin-bottom: 0;">
+                            <h2 class="panel-title" style="font-size: 1.05rem; margin-bottom: 0.5rem;"><i class="fa-solid fa-chart-line text-pink"></i> 股價走勢與樂活通道</h2>
+                        </div>
+                        <div id="monitor-detail-channel-chart" class="chart-container" style="height: 380px;"></div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Analysis View (Wrapper for Single Stock Analysis) -->
@@ -97,6 +161,8 @@
                     <div class="preset-group">
                         <label>熱門代碼</label>
                         <div class="presets">
+                            <button type="button" class="btn-preset" onclick="setSymbol('^TWII')">加權指數 (^TWII)</button>
+                            <button type="button" class="btn-preset" onclick="setSymbol('^TWOII')">櫃買指數 (^TWOII)</button>
                             <button type="button" class="btn-preset active" onclick="setSymbol('2330.TW')">台積電 (2330)</button>
                             <button type="button" class="btn-preset" onclick="setSymbol('SPY')">S&P 500 (SPY)</button>
                             <button type="button" class="btn-preset" onclick="setSymbol('AAPL')">蘋果 (AAPL)</button>
@@ -314,7 +380,7 @@
     </div>
 
     <!-- Custom JS -->
-    <script src="/static/app.js?v=1.2"></script>
+    <script src="/static/app.js?v=1.4"></script>
 
     <!-- Add Monitor Item Modal -->
     <div id="add-monitor-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9999; align-items:center; justify-content:center;">

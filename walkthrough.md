@@ -243,6 +243,105 @@ psycopg2-binary
 python-dotenv
 ```
 
+---
+
+## 十、Supabase 連線問題排查與修復記錄（2026-06-19）
+
+> ⚠️ **此為重大連線修復，接手 Agent 必讀**
+
+### 問題現象
+
+本地開發環境啟動伺服器後，`/api/monitor` 回傳 500 Internal Server Error，錯誤訊息：
+```
+psycopg2.OperationalError: could not translate host name 
+"db.uimtxxsqyykfcqihcrdz.supabase.co" to address: Name or service not known
+```
+
+而「單檔量化分析」Tab 功能正常（因為 `/api/lohas` 有 try/except fallback 到 yfinance 直接抓取，但 `/api/monitor` 的 DB 分支沒有相同的 fallback）。
+
+### 根本原因
+
+Supabase 的 **Direct connection** 端點 (`db.xxx.supabase.co`) **只提供 IPv6 地址**（`2406:da1c:61c:d600:...`），但本機的網路環境不支援 IPv6 路由。
+
+驗證過程：
+```bash
+# nslookup 能解析但只有 IPv6
+nslookup db.uimtxxsqyykfcqihcrdz.supabase.co
+# → Address: 2406:da1c:61c:d600:a15f:19f:ca1a:6860  (僅 IPv6)
+
+# Python socket 完全無法解析
+python -c "import socket; socket.getaddrinfo('db.uimtxxsqyykfcqihcrdz.supabase.co', 5432)"
+# → socket.gaierror: [Errno 11001] getaddrinfo failed
+
+# 直接用 IPv6 連線也不通
+python -c "import psycopg2; psycopg2.connect(host='[2406:da1c:61c:d600:...]', port=5432, ...)"
+# → Network is unreachable (0x00002743/10051)
+```
+
+### 解決方案：改用 Session Pooler
+
+Supabase 提供三種連線方式：
+
+| 連線方式 | Host | Port | 特點 |
+|---------|------|------|------|
+| **Direct connection** | `db.xxx.supabase.co` | 5432 | ❌ **僅 IPv6**，本機無法連線 |
+| Transaction pooler | `xxx.supabase.co` | 6543 | 適合 serverless |
+| **Session pooler** ✅ | `aws-X-region.pooler.supabase.com` | 5432 | ✅ **支援 IPv4**，適合本機開發 |
+
+**操作步驟**：
+1. 登入 [Supabase Dashboard](https://supabase.com/dashboard)
+2. 進入專案 → **Connect** 頁面（左側選單 → Connect to your project）
+3. Connection Method 選擇 **Session pooler**
+4. Type 選擇 **URI**
+5. 複製連線字串，格式為：
+   ```
+   postgresql://postgres.uimtxxsqyykfcqihcrdz:[PASSWORD]@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres
+   ```
+6. 更新 `.env` 檔案中的 `DATABASE_URL`
+
+### 修復後的 `.env` 設定
+
+```env
+# ❌ 舊的 Direct connection（僅 IPv6，本機無法使用）
+# DATABASE_URL=postgresql://postgres:[PASSWORD]@db.uimtxxsqyykfcqihcrdz.supabase.co:5432/postgres
+
+# ✅ 新的 Session pooler（走 IPv4，本機可用）
+DATABASE_URL=postgresql://postgres.uimtxxsqyykfcqihcrdz:[PASSWORD]@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres
+```
+
+> **注意**：Session pooler 的 user 格式是 `postgres.{project-ref}`（帶小數點），不是 Direct connection 的 `postgres`。
+
+### Supabase 專案暫停問題
+
+若 Supabase 免費版專案被暫停（連續 7 天無活動），pooler 端點會回傳：
+```
+FATAL: (ENOTFOUND) tenant/user postgres.uimtxxsqyykfcqihcrdz not found
+```
+此時需先到 Supabase Dashboard 恢復（Restore）專案後再連線。
+
+### 快速診斷指令
+
+若後續 Agent 遇到 DB 連線問題，可用以下指令快速診斷：
+
+```bash
+# 1. 測試 DNS 解析
+nslookup db.uimtxxsqyykfcqihcrdz.supabase.co 8.8.8.8
+
+# 2. 測試 Python socket 解析
+python -c "import socket; print(socket.getaddrinfo('aws-1-ap-southeast-2.pooler.supabase.com', 5432, socket.AF_INET))"
+
+# 3. 測試 psycopg2 直接連線
+python -c "import psycopg2; conn = psycopg2.connect(host='aws-1-ap-southeast-2.pooler.supabase.com', port=5432, user='postgres.uimtxxsqyykfcqihcrdz', password='YOUR_PASSWORD', dbname='postgres', connect_timeout=10); print('Connected!'); conn.close()"
+
+# 4. 測試 Supabase REST API 是否活著（不需密碼）
+python -c "import urllib.request; r = urllib.request.urlopen('https://uimtxxsqyykfcqihcrdz.supabase.co/rest/v1/'); print(r.status)"
+# 回傳 401 = 專案存活；Connection refused = 專案暫停
+```
+
+### Render 部署注意事項
+
+Render 上部署時，環境變數 `DATABASE_URL` 也需要同步更新為 Session pooler 的連線字串。Render 的伺服器可能同時支援 IPv4/IPv6，但為安全起見建議統一使用 Session pooler。
+
 
 > **交接文件**：本文件供接手的 AI Agent 或開發者閱讀，詳細記錄了所有已完成功能、技術決策與注意事項。請從頭閱讀後再動手。
 
@@ -473,3 +572,61 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 ```
+
+---
+
+## 十一、商品監控詳情、熱門指數新增與定時探活保活實作記錄（2026-06-20）
+
+> 📢 **本輪更新完成了商品即時監控原地展示、重要指數 Preset 與 GitHub Actions 自動探活保活等三大里程碑**
+
+### 11.1 即時商品監控原地加載與平滑滾動（UX 優化）
+- **修改檔案**：
+  - [index.html](file:///c:/Users/alber/Desktop/antigravity/Lohas/static/index.html) (新增 `monitor-detail-section` 詳情區塊、兩個 ECharts 圖表容器、參數選擇器、Z-Score、位階狀態卡與策略指引等)
+  - [style.css](file:///c:/Users/alber/Desktop/antigravity/Lohas/static/style.css) (新增 `.monitor-detail-charts-grid` 的 Grid 與 Media Query 響應式配置，在大螢幕雙欄並排，行動裝置自動改為單欄上下排列)
+  - [app.js](file:///c:/Users/alber/Desktop/antigravity/Lohas/static/app.js) (新增詳情專屬全域圖表變數 `monitorLohasChart`, `monitorChannelChart`。重寫 `selectSymbolFromMonitor` 以防在監控分頁點擊列時切換 Tab)
+- **平滑滾動 (Smooth Scroll)**：
+  - `loadMonitorDetail` 的宣告增加了 `autoScroll = false` 參數。
+  - 當使用者手動點擊表格列時，會將 `autoScroll` 設為 `true`，利用原生 `detailSection.scrollIntoView({ behavior: 'smooth', block: 'start' })` 將焦距平滑跳轉至下方圖表區。
+  - 當首頁剛載入進行預設加載（預設載入清單首個商品）或排序更新時，則維持 `autoScroll = false`，防範不自然滾動干擾閱讀。
+
+### 11.2 熱門代碼新增大盤指數與動態比對重構
+- **新增 Preset 按鈕**：
+  - 加權指數 (`^TWII`) 與 櫃買指數 (`^TWOII`)。
+- **比對邏輯重構 (app.js)**：
+  - 移除了原先 `setSymbol` 與 `handleSearch` 中繁冗的硬編碼比對判定 (如 `symbol === '0050.TW' && text.includes(...)`)。
+  - 改用動態比對：
+    ```javascript
+    const onClickStr = button.getAttribute('onclick') || '';
+    const match = onClickStr.match(/setSymbol\(['"]([^'"]+)['"]\)/);
+    const presetSymbol = match ? match[1] : '';
+    // 進行大小寫無關匹配，且支援前綴模糊比對（如輸入 2330 可匹配 2330.TW，輸入 ^TWII 匹配加權指數）
+    ```
+  - **好處**：之後若要新增或變更熱門 Preset 按鈕，直接在 `index.html` 改 HTML 即可，前端 JS 邏輯完全無須重新修改，維護性大增。
+
+### 11.3 Render 部署啟動衝突修復與環境變數對接
+- **啟動衝突修正**：
+  - Render 的啟動命令預設呼叫 `python main.py`，然而 FastAPI/Uvicorn 專案若在 `main.py` 中缺乏常駐線程的 listen 邏輯，會直接執行完程式宣告並退出（報錯 `Application exited early`）。
+  - **解決方案**：在 `main.py` 尾端加上相容常駐偵測：
+    ```python
+    if __name__ == '__main__':
+        import uvicorn
+        import os
+        port = int(os.environ.get("PORT", 8000))
+        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    ```
+- **線上站資料庫連線**：
+  - 確保在 Render 的 Environment 區塊，將 `DATABASE_URL` 設定為最新的 Supabase Session pooler 連線字串（走 IPv4，避開 Direct connection 的 IPv6 DNS 失敗），否則後端將 Fallback 進入直接 yfinance fetch 慢速模式。
+
+### 11.4 GitHub Actions 自動探活保活機制 (防 Supabase 休眠)
+- **探活保活腳本**：
+  - [NEW] [keep_alive.py](file:///c:/Users/alber/Desktop/antigravity/Lohas/keep_alive.py)：利用極簡 `psycopg2-binary` 對 Supabase 資料庫進行連線並執行 `SELECT 1;` 及健康指標檢查。
+- **定時工作流 (Workflow)**：
+  - [NEW] [.github/workflows/keep_alive.yml](file:///c:/Users/alber/Desktop/antigravity/Lohas/.github/workflows/keep_alive.yml)：設定 GitHub Actions 每 3 天的 UTC 16:00 (台灣時間隔天凌晨 00:00) 自動啟動並執行一次 `keep_alive.py`。
+  - **金鑰設定**：使用 `secrets.DATABASE_URL` 作為連線字串安全保護。接手開發者若要在新分支或新倉庫使用，需確認 GitHub Repository Settings -> Secrets -> Actions 中已儲存此 Secrets 金鑰。
+- **手動觸發支援**：
+  - 支援 `workflow_dispatch`，可至 GitHub Actions 點選並手動執行 "Supabase Keep Alive" 工作流進行連線測試。
+
+### 11.5 yfinance 數據源已知限制備忘 (重要)
+- **問題**：櫃買指數 (`^TWOII`) 的歷史數據有時在 Yahoo Finance 上更新極慢，可能會發生歷史數據落後真實時間一週以上的斷檔現象（此為 yfinance/Yahoo 數據源對台股 OTC 指數的長期限制）。
+- **診斷**：系統中所有快取及解析皆運作正確，當 Yahoo Finance 更新補上數據後，系統會自動在下一次請求時撈取同步。
+

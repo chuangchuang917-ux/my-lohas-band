@@ -2,13 +2,24 @@ import datetime
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
-from database import init_db, DB_ENABLED, DailyPrice, WeeklyPrice, SessionLocal
+from typing import Optional, List
+from database import init_db, DB_ENABLED, DailyPrice, WeeklyPrice, SessionLocal, WatchlistItem
 
 app = FastAPI(title="LOHAS Linear Regression Band Analyzer")
+
+# Prevent API responses from being cached by browsers
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 # Ensure static directory exists
 if not os.path.exists("static"):
@@ -20,6 +31,27 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.on_event("startup")
 def on_startup():
     init_db()
+    if DB_ENABLED:
+        db = SessionLocal()
+        try:
+            if db.query(WatchlistItem).count() == 0:
+                print("[Database] Watchlist is empty. Seeding default items...")
+                default_items = []
+                for idx, item in enumerate(MONITOR_ITEMS):
+                    default_items.append(
+                        WatchlistItem(
+                            symbol=item["symbol"],
+                            name=item["name"],
+                            display_order=idx
+                        )
+                    )
+                db.add_all(default_items)
+                db.commit()
+                print(f"[Database] Successfully seeded {len(default_items)} default monitor items.")
+        except Exception as e:
+            print(f"[Database] Error seeding watchlist: {e}")
+        finally:
+            db.close()
 
 @app.get("/")
 def read_root():
@@ -96,7 +128,8 @@ STOCK_NAMES = {
     "^VIX": "恐慌指數",
     # 新增監控商品
     "^TWII": "台灣加權指數",
-    "^VNINDEX": "越南胡志明指數",
+    "^TWOII": "櫃買指數",
+    "^VNINDEX.VN": "越南胡志明指數",
     "^N225": "日本日經225",
     "ZS=F": "大豆期貨",
     "ZC=F": "玉米期貨",
@@ -109,6 +142,16 @@ COMPANY_NAME_CACHE = {}
 
 def get_company_name(symbol: str, ticker) -> str:
     sym_upper = symbol.upper().strip()
+    if DB_ENABLED:
+        db = SessionLocal()
+        try:
+            item = db.query(WatchlistItem).filter_by(symbol=sym_upper).first()
+            if item:
+                return item.name
+        except Exception as e:
+            print(f"[Database Error] get_company_name failed to read from DB: {e}")
+        finally:
+            db.close()
     if sym_upper in STOCK_NAMES:
         return STOCK_NAMES[sym_upper]
     if sym_upper in COMPANY_NAME_CACHE:
@@ -681,7 +724,7 @@ MONITOR_ITEMS = [
     {"symbol": "0050.TW", "name": "元大台灣50"},
     # 新增商品
     {"symbol": "^TWII",   "name": "台灣加權指數"},
-    {"symbol": "FVNM",    "name": "越南ETF(FVNM)"},
+    {"symbol": "^VNINDEX.VN", "name": "越南胡志明指數"},
     {"symbol": "^N225",   "name": "日本日經225"},
     {"symbol": "ZS=F",    "name": "大豆期貨"},
     {"symbol": "ZC=F",    "name": "玉米期貨"},
@@ -702,7 +745,18 @@ def get_monitor_data(symbols: str = None):
         custom_syms = [s.strip() for s in symbols.split(',') if s.strip()]
         items = [{"symbol": standardize_symbol(s), "name": STOCK_NAMES.get(s.strip().upper(), s.strip().upper())} for s in custom_syms]
     else:
-        items = MONITOR_ITEMS
+        if DB_ENABLED:
+            db_temp = SessionLocal()
+            try:
+                db_items = db_temp.query(WatchlistItem).order_by(WatchlistItem.display_order.asc()).all()
+                items = [{"symbol": i.symbol, "name": i.name} for i in db_items]
+            except Exception as e:
+                print(f"[Database Error] Failed to read watchlist_items: {e}")
+                items = MONITOR_ITEMS
+            finally:
+                db_temp.close()
+        else:
+            items = MONITOR_ITEMS
     result = []
 
     if not DB_ENABLED:
@@ -926,3 +980,116 @@ def get_monitor_data(symbols: str = None):
         
     return result
 
+from pydantic import BaseModel
+
+class WatchlistAddRequest(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+
+class WatchlistReorderRequest(BaseModel):
+    symbols: List[str]
+
+class WatchlistUpdateRequest(BaseModel):
+    name: str
+
+@app.post("/api/watchlist")
+def add_watchlist_item(payload: WatchlistAddRequest):
+    if not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database is not enabled")
+    db = SessionLocal()
+    try:
+        symbol = standardize_symbol(payload.symbol)
+        # Check if already exists
+        exists = db.query(WatchlistItem).filter_by(symbol=symbol).first()
+        if exists:
+            raise HTTPException(status_code=400, detail=f"Symbol {symbol} already exists in watchlist")
+        
+        # Determine display order (max display_order + 1)
+        from sqlalchemy import func
+        max_order = db.query(func.max(WatchlistItem.display_order)).scalar()
+        next_order = (max_order + 1) if max_order is not None else 0
+        
+        name = payload.name
+        if not name:
+            ticker = yf.Ticker(symbol)
+            name = get_company_name(symbol, ticker)
+            
+        new_item = WatchlistItem(symbol=symbol, name=name, display_order=next_order)
+        db.add(new_item)
+        db.commit()
+        return {"success": True, "item": {"symbol": new_item.symbol, "name": new_item.name}}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+@app.put("/api/watchlist/{symbol}")
+def update_watchlist_item(symbol: str, payload: WatchlistUpdateRequest):
+    if not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database is not enabled")
+    db = SessionLocal()
+    try:
+        search_symbol = standardize_symbol(symbol)
+        item = db.query(WatchlistItem).filter_by(symbol=search_symbol).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Watchlist item not found")
+        item.name = payload.name.strip()
+        db.commit()
+        return {"success": True}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+@app.delete("/api/watchlist/{symbol}")
+def delete_watchlist_item(symbol: str):
+    if not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database is not enabled")
+    db = SessionLocal()
+    try:
+        search_symbol = standardize_symbol(symbol)
+        item = db.query(WatchlistItem).filter_by(symbol=search_symbol).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Watchlist item not found")
+        db.delete(item)
+        db.commit()
+        return {"success": True}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+@app.post("/api/watchlist/reorder")
+def reorder_watchlist(payload: WatchlistReorderRequest):
+    if not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database is not enabled")
+    db = SessionLocal()
+    try:
+        for idx, symbol in enumerate(payload.symbols):
+            search_symbol = standardize_symbol(symbol)
+            item = db.query(WatchlistItem).filter_by(symbol=search_symbol).first()
+            if item:
+                item.display_order = idx
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+if __name__ == '__main__':
+    import uvicorn
+    import os
+    # 優先讀取 Render 自動注入的 PORT 環境變數，若無則預設為 8000
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
